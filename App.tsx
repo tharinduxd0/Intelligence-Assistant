@@ -77,6 +77,16 @@ const App: React.FC = () => {
   const startSession = async () => {
     setStatus({ isActive: false, isConnecting: true, isMicActive: false, error: null });
 
+    // 1. Check for Media Devices Support (Fixes the crash)
+    if (!navigator.mediaDevices) {
+      setStatus(prev => ({ 
+        ...prev, 
+        error: "Media devices (mic/audio) are not available. This usually happens if the site is not using HTTPS or is in a restricted environment.", 
+        isConnecting: false 
+      }));
+      return;
+    }
+
     if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
       await window.aistudio.openSelectKey();
     }
@@ -87,7 +97,7 @@ const App: React.FC = () => {
     }
 
     try {
-      // 1. Get Microphone (Candidate Voice)
+      // 2. Get Microphone (Candidate Voice)
       const micStream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -95,11 +105,11 @@ const App: React.FC = () => {
           autoGainControl: true
         } 
       }).catch(err => {
-        throw new Error(`Microphone Access Denied: ${err.message}`);
+        throw new Error(`Microphone Access Denied: ${err.message}. Please allow mic access in your browser.`);
       });
       micStreamRef.current = micStream;
 
-      // 2. Get System Audio (Professor Voice via Speakers/WhatsApp)
+      // 3. Get System Audio (Professor Voice via Speakers/WhatsApp)
       let systemStream: MediaStream | null = null;
       try {
         const displayConstraints = {
@@ -121,12 +131,12 @@ const App: React.FC = () => {
         const audioTracks = systemStream.getAudioTracks();
         if (audioTracks.length === 0) {
           systemStream.getTracks().forEach(t => t.stop());
-          throw new Error("System audio share was NOT enabled. Please restart and check the 'Share Audio' box in the browser dialog.");
+          throw new Error("System audio share was NOT enabled. When sharing, you MUST check the 'Share Audio' box at the bottom of the browser popup.");
         }
         systemStreamRef.current = systemStream;
       } catch (e: any) {
         if (e.name === 'NotAllowedError') {
-          throw new Error("Permission Denied: You must allow sharing and check 'Share Audio' to capture the professor's voice.");
+          throw new Error("Permission Denied: You must allow screen/tab sharing AND check 'Share Audio' to capture the professor's voice.");
         }
         throw e;
       }
@@ -218,7 +228,7 @@ const App: React.FC = () => {
           },
           onerror: (e: any) => {
             console.error("Session Error:", e);
-            setStatus(prev => ({ ...prev, error: "Connection interrupted. Please refresh.", isConnecting: false }));
+            setStatus(prev => ({ ...prev, error: "Session interrupted. Check internet and try again.", isConnecting: false }));
             stopSession();
           },
           onclose: () => stopSession()
@@ -307,19 +317,20 @@ const App: React.FC = () => {
               <textarea
                 value={knowledgeBase}
                 onChange={(e) => setKnowledgeBase(e.target.value)}
-                placeholder="Knowledge base/Context for AI..."
+                placeholder="Paste Job Description, Resume, or Subject Notes here..."
                 className="flex-1 bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all custom-scrollbar placeholder:text-slate-600"
               />
               <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 space-y-3">
-                <p className="text-[11px] text-indigo-300 font-bold">⚠️ CAPTURE INSTRUCTIONS:</p>
+                <p className="text-[11px] text-indigo-300 font-bold uppercase tracking-wider">⚠️ Important Setup:</p>
                 <div className="text-[10px] text-slate-400 space-y-2 leading-relaxed">
-                  <p>When the sharing popup appears:</p>
+                  <p>To capture the interviewer's voice:</p>
                   <ol className="list-decimal list-inside ml-1 space-y-1">
-                    <li>Select <b>'Entire Screen'</b> or the specific <b>'WhatsApp Call Tab'</b>.</li>
-                    <li><b>IMPORTANT:</b> Locate and check the <b>'Share audio'</b> checkbox at the bottom left.</li>
-                    <li>Click <b>'Share'</b>.</li>
+                    <li>Click <b>'Enable Viva Guard'</b>.</li>
+                    <li>Select the <b>Tab/Window</b> with your video call.</li>
+                    <li>Look at the bottom left of the browser popup and check <b>'Share Audio'</b>.</li>
+                    <li>Click <b>Share</b> to start.</li>
                   </ol>
-                  <p className="mt-2 text-indigo-400 italic font-medium">This allows the AI to hear the Professor's voice through your system.</p>
+                  <p className="mt-2 text-indigo-400 italic font-medium">Note: Media APIs require HTTPS or Localhost.</p>
                 </div>
               </div>
             </div>

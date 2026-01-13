@@ -75,7 +75,6 @@ const App: React.FC = () => {
   }, []);
 
   const startSession = async () => {
-    // Reset state
     setStatus({ isActive: false, isConnecting: true, isMicActive: false, error: null });
 
     if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
@@ -88,34 +87,30 @@ const App: React.FC = () => {
     }
 
     try {
-      // 1. Check for Secure Context
-      if (!window.isSecureContext) {
-        throw new Error("This application requires a secure context (HTTPS/localhost) to access media devices.");
-      }
-
-      // 2. Get Microphone (Candidate Voice)
+      // 1. Get Microphone (Candidate Voice)
       const micStream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true
         } 
+      }).catch(err => {
+        throw new Error(`Microphone Access Denied: ${err.message}`);
       });
       micStreamRef.current = micStream;
 
-      // 3. Get System Audio (Professor Voice via Speakers/WhatsApp)
+      // 2. Get System Audio (Professor Voice via Speakers/WhatsApp)
       let systemStream: MediaStream | null = null;
       try {
-        // Constraints optimized for audio-only capture within display media
         const displayConstraints = {
           video: {
-            displaySurface: "browser", // Preferred for tab audio, but allows entire screen
-            width: { max: 1 }, // Minimize video impact
+            displaySurface: "browser",
+            width: { max: 1 },
             height: { max: 1 },
             frameRate: { max: 1 }
           },
           audio: {
-            echoCancellation: false, // Don't cancel interviewer's voice
+            echoCancellation: false,
             noiseSuppression: false,
             autoGainControl: false,
           }
@@ -126,12 +121,12 @@ const App: React.FC = () => {
         const audioTracks = systemStream.getAudioTracks();
         if (audioTracks.length === 0) {
           systemStream.getTracks().forEach(t => t.stop());
-          throw new Error("The 'Share Audio' checkbox was NOT checked. The AI won't be able to hear the professor. Please retry and check the box.");
+          throw new Error("System audio share was NOT enabled. Please restart and check the 'Share Audio' box in the browser dialog.");
         }
         systemStreamRef.current = systemStream;
       } catch (e: any) {
         if (e.name === 'NotAllowedError') {
-          throw new Error("Permission Denied: You must grant screen/tab sharing AND check the 'Share Audio' box to continue.");
+          throw new Error("Permission Denied: You must allow sharing and check 'Share Audio' to capture the professor's voice.");
         }
         throw e;
       }
@@ -150,7 +145,7 @@ const App: React.FC = () => {
       if (systemStream) {
         const systemSource = audioCtx.createMediaStreamSource(systemStream);
         const systemGain = audioCtx.createGain();
-        systemGain.gain.value = 1.5; // High gain for system audio to ensure professor is heard clearly
+        systemGain.gain.value = 1.8; // High priority for Professor's voice comprehension
         systemSource.connect(systemGain);
         systemGain.connect(mixerNode);
       }
@@ -223,7 +218,7 @@ const App: React.FC = () => {
           },
           onerror: (e: any) => {
             console.error("Session Error:", e);
-            setStatus(prev => ({ ...prev, error: "Session interrupted. Checking connection...", isConnecting: false }));
+            setStatus(prev => ({ ...prev, error: "Connection interrupted. Please refresh.", isConnecting: false }));
             stopSession();
           },
           onclose: () => stopSession()
@@ -235,18 +230,18 @@ const App: React.FC = () => {
           systemInstruction: `You are a specialized Viva Intelligence Guard. 
             
             PARTIES:
-            1. PROFESSOR (Priority voice, from speakers/system audio).
-            2. STUDENT (The user you are helping, from microphone).
-            3. YOU (Silent agent providing VISUAL-ONLY hints).
+            1. PROFESSOR (Priority voice, captured via system audio).
+            2. STUDENT (The user you are helping, captured via microphone).
+            3. YOU (Silent agent providing VISUAL-ONLY answers and hints).
             
-            RULES:
-            - Listen to the PROFESSOR. When they ask a question, IMMEDIATELY show a detailed answer and talking points visually.
-            - Listen to the STUDENT. If they struggle, make a mistake, or miss a technical term, provide a visual HINT or CORRECTION immediately.
-            - STAY SILENT: DO NOT output any voice/audio. Your communication is strictly via transcriptions/visual hints.
-            - ZERO LATENCY: Respond as soon as the Professor's question is identified.
-            - NO LOOPS: Do not respond to your own visual outputs.
+            OPERATIONAL PROTOCOL:
+            - MONITOR PROFESSOR: When the professor asks a question, IMMEDIATELY show a comprehensive answer and key talking points in the transcription/suggestions area.
+            - MONITOR STUDENT: Listen to the student's response. If they are incorrect or miss a major detail, provide a correction hint immediately.
+            - IGNORE YOURSELF: You are analyzing a mixed audio stream. DO NOT respond to your own previous hints or transcriptions. Only analyze the Professor's and Student's human voices.
+            - OUTPUT FORMAT: Use Bold, Bullet points, and concise text for speed.
+            - YOUR GOAL: Be the student's invisible encyclopedia. Do not talk back verbally.
             
-            CONTEXT: ${knowledgeBase || 'Technical/Academic Viva Session.'}`,
+            CONTEXT: ${knowledgeBase || 'Advanced Academic Viva Session.'}`,
         }
       });
 
@@ -273,7 +268,7 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Viva Guard</h1>
-            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Active Listener v2.0</p>
+            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Capture Mode: System Audio + Mic</p>
           </div>
         </div>
 
@@ -286,7 +281,7 @@ const App: React.FC = () => {
                 disabled={status.isConnecting}
                 className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-bold transition-all flex items-center gap-2 shadow-xl shadow-indigo-600/20 active:scale-95"
               >
-                {status.isConnecting ? "Configuring..." : "Enable Guard"}
+                {status.isConnecting ? "Connecting..." : "Enable Viva Guard"}
               </button>
             </div>
           ) : (
@@ -295,7 +290,7 @@ const App: React.FC = () => {
               className="px-6 py-2.5 rounded-xl bg-rose-600/10 border border-rose-500/50 hover:bg-rose-600/20 text-rose-400 text-sm font-bold transition-all flex items-center gap-2"
             >
               <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></div>
-              Stop Session
+              End Guarding
             </button>
           )}
         </div>
@@ -306,7 +301,7 @@ const App: React.FC = () => {
           <div className="w-80 flex flex-col gap-5 bg-white/[0.03] backdrop-blur-sm rounded-3xl p-6 border border-white/5 shadow-inner">
             <div className="flex items-center gap-2">
               <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Configuration</h2>
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Knowledge Prep</h2>
             </div>
             <div className="flex-1 flex flex-col gap-3">
               <textarea
@@ -316,14 +311,15 @@ const App: React.FC = () => {
                 className="flex-1 bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all custom-scrollbar placeholder:text-slate-600"
               />
               <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 space-y-3">
-                <p className="text-[11px] text-indigo-300 font-bold">⚠️ CRITICAL PERMISSION STEP:</p>
-                <div className="text-[10px] text-slate-400 space-y-1.5 leading-relaxed">
-                  <p>When you click <b>'Enable Guard'</b>, a browser window will pop up:</p>
-                  <ol className="list-decimal list-inside ml-1">
-                    <li>Select <b>'Entire Screen'</b> or the specific <b>'WhatsApp/Call Tab'</b>.</li>
-                    <li>Look for the <b>'Share system audio'</b> (or 'Share tab audio') checkbox at the bottom left.</li>
-                    <li><b>YOU MUST CHECK THIS BOX</b> or the AI cannot hear the professor.</li>
+                <p className="text-[11px] text-indigo-300 font-bold">⚠️ CAPTURE INSTRUCTIONS:</p>
+                <div className="text-[10px] text-slate-400 space-y-2 leading-relaxed">
+                  <p>When the sharing popup appears:</p>
+                  <ol className="list-decimal list-inside ml-1 space-y-1">
+                    <li>Select <b>'Entire Screen'</b> or the specific <b>'WhatsApp Call Tab'</b>.</li>
+                    <li><b>IMPORTANT:</b> Locate and check the <b>'Share audio'</b> checkbox at the bottom left.</li>
+                    <li>Click <b>'Share'</b>.</li>
                   </ol>
+                  <p className="mt-2 text-indigo-400 italic font-medium">This allows the AI to hear the Professor's voice through your system.</p>
                 </div>
               </div>
             </div>

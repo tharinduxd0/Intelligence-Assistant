@@ -77,11 +77,10 @@ const App: React.FC = () => {
   const startSession = async () => {
     setStatus({ isActive: false, isConnecting: true, isMicActive: false, error: null });
 
-    // 1. Check for Media Devices Support (Fixes the crash)
-    if (!navigator.mediaDevices) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       setStatus(prev => ({ 
         ...prev, 
-        error: "Media devices (mic/audio) are not available. This usually happens if the site is not using HTTPS or is in a restricted environment.", 
+        error: "Media capture is not supported in this browser or environment (ensure HTTPS/Localhost).", 
         isConnecting: false 
       }));
       return;
@@ -97,7 +96,7 @@ const App: React.FC = () => {
     }
 
     try {
-      // 2. Get Microphone (Candidate Voice)
+      // 1. Get Microphone
       const micStream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -105,20 +104,15 @@ const App: React.FC = () => {
           autoGainControl: true
         } 
       }).catch(err => {
-        throw new Error(`Microphone Access Denied: ${err.message}. Please allow mic access in your browser.`);
+        throw new Error(`Microphone denied: ${err.message}`);
       });
       micStreamRef.current = micStream;
 
-      // 3. Get System Audio (Professor Voice via Speakers/WhatsApp)
+      // 2. Get System Audio (Refined constraints for better 'Share Audio' visibility)
       let systemStream: MediaStream | null = null;
       try {
         const displayConstraints = {
-          video: {
-            displaySurface: "browser",
-            width: { max: 1 },
-            height: { max: 1 },
-            frameRate: { max: 1 }
-          },
+          video: true, // Most browsers require video:true to offer audio share
           audio: {
             echoCancellation: false,
             noiseSuppression: false,
@@ -126,17 +120,17 @@ const App: React.FC = () => {
           }
         };
 
-        systemStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints as any);
+        systemStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
         
         const audioTracks = systemStream.getAudioTracks();
         if (audioTracks.length === 0) {
           systemStream.getTracks().forEach(t => t.stop());
-          throw new Error("System audio share was NOT enabled. When sharing, you MUST check the 'Share Audio' box at the bottom of the browser popup.");
+          throw new Error("AUDIO NOT SHARED: You must check the 'Share audio' box in the browser popup (usually bottom-left).");
         }
         systemStreamRef.current = systemStream;
       } catch (e: any) {
         if (e.name === 'NotAllowedError') {
-          throw new Error("Permission Denied: You must allow screen/tab sharing AND check 'Share Audio' to capture the professor's voice.");
+          throw new Error("PERMISSION DENIED: You cancelled the share or denied permission. Please try again and ensure 'Share Audio' is checked.");
         }
         throw e;
       }
@@ -155,7 +149,7 @@ const App: React.FC = () => {
       if (systemStream) {
         const systemSource = audioCtx.createMediaStreamSource(systemStream);
         const systemGain = audioCtx.createGain();
-        systemGain.gain.value = 1.8; // High priority for Professor's voice comprehension
+        systemGain.gain.value = 2.0; // Higher gain for the professor
         systemSource.connect(systemGain);
         systemGain.connect(mixerNode);
       }
@@ -228,7 +222,7 @@ const App: React.FC = () => {
           },
           onerror: (e: any) => {
             console.error("Session Error:", e);
-            setStatus(prev => ({ ...prev, error: "Session interrupted. Check internet and try again.", isConnecting: false }));
+            setStatus(prev => ({ ...prev, error: "Connection error. Please restart Guard.", isConnecting: false }));
             stopSession();
           },
           onclose: () => stopSession()
@@ -237,21 +231,21 @@ const App: React.FC = () => {
           responseModalities: [Modality.AUDIO],
           outputAudioTranscription: {},
           inputAudioTranscription: {},
-          systemInstruction: `You are a specialized Viva Intelligence Guard. 
+          systemInstruction: `You are the Viva Intelligence Guard. 
             
-            PARTIES:
-            1. PROFESSOR (Priority voice, captured via system audio).
-            2. STUDENT (The user you are helping, captured via microphone).
-            3. YOU (Silent agent providing VISUAL-ONLY answers and hints).
+            PARTIES IN STREAM:
+            - PROFESSOR (System Audio): Asking questions.
+            - STUDENT (Microphone): Answering questions.
+            - YOU: Silent visual assistant.
             
-            OPERATIONAL PROTOCOL:
-            - MONITOR PROFESSOR: When the professor asks a question, IMMEDIATELY show a comprehensive answer and key talking points in the transcription/suggestions area.
-            - MONITOR STUDENT: Listen to the student's response. If they are incorrect or miss a major detail, provide a correction hint immediately.
-            - IGNORE YOURSELF: You are analyzing a mixed audio stream. DO NOT respond to your own previous hints or transcriptions. Only analyze the Professor's and Student's human voices.
-            - OUTPUT FORMAT: Use Bold, Bullet points, and concise text for speed.
-            - YOUR GOAL: Be the student's invisible encyclopedia. Do not talk back verbally.
+            TASKS:
+            1. Transcribe the Professor's questions and IMMEDIATELY provide the best possible technical answer visually.
+            2. Monitor the Student's verbal response. If they stutter, fail to explain a concept, or give a wrong answer, provide a "Corrective Hint" or "Key Fact" box immediately.
+            3. Use formatted text: **Bold**, bullet points, or short numbered lists for high readability.
+            4. STAY SILENT. Do not use your voice. 
+            5. IMPORTANT: Ignore your own previous outputs in the audio stream to avoid feedback loops.
             
-            CONTEXT: ${knowledgeBase || 'Advanced Academic Viva Session.'}`,
+            CONTEXT: ${knowledgeBase || 'Professional viva/interview session.'}`,
         }
       });
 
@@ -259,7 +253,7 @@ const App: React.FC = () => {
 
     } catch (err: any) {
       console.error("Startup Error:", err);
-      setStatus(prev => ({ ...prev, error: err.message || "Failed to start capture.", isConnecting: false }));
+      setStatus(prev => ({ ...prev, error: err.message, isConnecting: false }));
       stopSession();
     }
   };
@@ -278,29 +272,27 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Viva Guard</h1>
-            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Capture Mode: System Audio + Mic</p>
+            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Silent Companion v2.1</p>
           </div>
         </div>
 
         <div className="flex items-center gap-4">
           <StatusIndicator status={status} />
           {!status.isActive ? (
-            <div className="flex flex-col items-end gap-1">
-              <button
-                onClick={startSession}
-                disabled={status.isConnecting}
-                className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-bold transition-all flex items-center gap-2 shadow-xl shadow-indigo-600/20 active:scale-95"
-              >
-                {status.isConnecting ? "Connecting..." : "Enable Viva Guard"}
-              </button>
-            </div>
+            <button
+              onClick={startSession}
+              disabled={status.isConnecting}
+              className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-bold transition-all flex items-center gap-2 shadow-xl shadow-indigo-600/20 active:scale-95"
+            >
+              {status.isConnecting ? "Initializing..." : "Enable Viva Guard"}
+            </button>
           ) : (
             <button
               onClick={stopSession}
               className="px-6 py-2.5 rounded-xl bg-rose-600/10 border border-rose-500/50 hover:bg-rose-600/20 text-rose-400 text-sm font-bold transition-all flex items-center gap-2"
             >
               <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></div>
-              End Guarding
+              Terminate Guard
             </button>
           )}
         </div>
@@ -308,31 +300,58 @@ const App: React.FC = () => {
 
       <main className="flex-1 flex overflow-hidden p-6 gap-6 relative">
         {!status.isActive && (
-          <div className="w-80 flex flex-col gap-5 bg-white/[0.03] backdrop-blur-sm rounded-3xl p-6 border border-white/5 shadow-inner">
+          <div className="w-96 flex flex-col gap-5 bg-white/[0.03] backdrop-blur-sm rounded-3xl p-6 border border-white/5 shadow-inner">
             <div className="flex items-center gap-2">
               <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Knowledge Prep</h2>
+              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Setup Guide</h2>
             </div>
-            <div className="flex-1 flex flex-col gap-3">
+            <div className="flex-1 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
               <textarea
                 value={knowledgeBase}
                 onChange={(e) => setKnowledgeBase(e.target.value)}
-                placeholder="Paste Job Description, Resume, or Subject Notes here..."
-                className="flex-1 bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all custom-scrollbar placeholder:text-slate-600"
+                placeholder="Paste Job Description or Study Notes for better AI accuracy..."
+                className="h-32 bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all placeholder:text-slate-600"
               />
-              <div className="p-4 rounded-2xl bg-indigo-500/5 border border-indigo-500/10 space-y-3">
-                <p className="text-[11px] text-indigo-300 font-bold uppercase tracking-wider">⚠️ Important Setup:</p>
-                <div className="text-[10px] text-slate-400 space-y-2 leading-relaxed">
-                  <p>To capture the interviewer's voice:</p>
-                  <ol className="list-decimal list-inside ml-1 space-y-1">
-                    <li>Click <b>'Enable Viva Guard'</b>.</li>
-                    <li>Select the <b>Tab/Window</b> with your video call.</li>
-                    <li>Look at the bottom left of the browser popup and check <b>'Share Audio'</b>.</li>
-                    <li>Click <b>Share</b> to start.</li>
-                  </ol>
-                  <p className="mt-2 text-indigo-400 italic font-medium">Note: Media APIs require HTTPS or Localhost.</p>
+              
+              <div className="p-5 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 space-y-4">
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 w-5 h-5 rounded-full bg-indigo-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold">1</div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Click <b>'Enable Viva Guard'</b>. You will see a browser sharing popup.
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 w-5 h-5 rounded-full bg-indigo-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold">2</div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Select the <b>'Chrome Tab'</b> (or Tab) containing your Viva/WhatsApp call. 
+                    <span className="block mt-1 text-indigo-400 font-bold">Tab sharing is the most reliable for audio.</span>
+                  </p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <div className="mt-1 w-5 h-5 rounded-full bg-amber-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-black">!</div>
+                  <p className="text-[11px] text-amber-200 leading-relaxed font-bold">
+                    CRITICAL: Look for the 'Share tab audio' (or 'Share audio') checkbox at the bottom left of the popup and CHECK IT.
+                  </p>
                 </div>
               </div>
+              
+              {status.error && (
+                <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 animate-in slide-in-from-top-2">
+                  <h3 className="text-xs font-bold text-rose-400 mb-1 flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Capture Error
+                  </h3>
+                  <p className="text-[10px] text-rose-300 leading-relaxed">{status.error}</p>
+                  <button 
+                    onClick={startSession}
+                    className="mt-3 text-[10px] font-black uppercase text-indigo-400 hover:text-indigo-300 underline"
+                  >
+                    Click here to retry capture
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         )}

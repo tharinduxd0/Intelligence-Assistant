@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Blob as GeminiBlob } from '@google/genai';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, Suggestion, SessionStatus } from './types';
@@ -28,6 +28,21 @@ const App: React.FC = () => {
   
   const currentInputTranscription = useRef('');
   const currentOutputTranscription = useRef('');
+
+  // Check for secure context and API availability on mount
+  useEffect(() => {
+    if (!window.isSecureContext && window.location.hostname !== 'localhost') {
+      setStatus(prev => ({
+        ...prev,
+        error: "CRITICAL: This app requires HTTPS or Localhost to access Microphone and System Audio. Please switch to a secure connection."
+      }));
+    } else if (!navigator.mediaDevices) {
+      setStatus(prev => ({
+        ...prev,
+        error: "Media Devices API not found. Please ensure you are using a modern browser (Chrome, Edge, Firefox) and have granted necessary permissions."
+      }));
+    }
+  }, []);
 
   const encode = (bytes: Uint8Array) => {
     let binary = '';
@@ -77,10 +92,10 @@ const App: React.FC = () => {
   const startSession = async () => {
     setStatus({ isActive: false, isConnecting: true, isMicActive: false, error: null });
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || !navigator.mediaDevices.getUserMedia) {
       setStatus(prev => ({ 
         ...prev, 
-        error: "Media capture is not supported in this browser or environment (ensure HTTPS/Localhost).", 
+        error: "Media capture is not fully supported in this environment. Ensure you are on HTTPS and using a desktop browser.", 
         isConnecting: false 
       }));
       return;
@@ -104,33 +119,28 @@ const App: React.FC = () => {
           autoGainControl: true
         } 
       }).catch(err => {
-        throw new Error(`Microphone denied: ${err.message}`);
+        throw new Error(`Microphone Access Error: ${err.message}. Please click the lock icon in the URL bar and allow 'Microphone'.`);
       });
       micStreamRef.current = micStream;
 
-      // 2. Get System Audio (Refined constraints for better 'Share Audio' visibility)
+      // 2. Get System Audio (Professor's Voice)
       let systemStream: MediaStream | null = null;
       try {
-        const displayConstraints = {
-          video: true, // Most browsers require video:true to offer audio share
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false,
-          }
-        };
-
-        systemStream = await navigator.mediaDevices.getDisplayMedia(displayConstraints);
+        // Simplified constraints for maximum browser compatibility
+        systemStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: true
+        });
         
         const audioTracks = systemStream.getAudioTracks();
         if (audioTracks.length === 0) {
           systemStream.getTracks().forEach(t => t.stop());
-          throw new Error("AUDIO NOT SHARED: You must check the 'Share audio' box in the browser popup (usually bottom-left).");
+          throw new Error("AUDIO NOT DETECTED: You must check the 'Share audio' box in the browser popup (bottom-left). If you don't see the checkbox, try sharing a 'Chrome Tab' specifically.");
         }
         systemStreamRef.current = systemStream;
       } catch (e: any) {
         if (e.name === 'NotAllowedError') {
-          throw new Error("PERMISSION DENIED: You cancelled the share or denied permission. Please try again and ensure 'Share Audio' is checked.");
+          throw new Error("PERMISSION DENIED: You must allow sharing AND check 'Share Audio' to capture the professor's voice.");
         }
         throw e;
       }
@@ -149,7 +159,7 @@ const App: React.FC = () => {
       if (systemStream) {
         const systemSource = audioCtx.createMediaStreamSource(systemStream);
         const systemGain = audioCtx.createGain();
-        systemGain.gain.value = 2.0; // Higher gain for the professor
+        systemGain.gain.value = 2.0; // Boost system audio so AI hears the professor clearly
         systemSource.connect(systemGain);
         systemGain.connect(mixerNode);
       }
@@ -222,7 +232,7 @@ const App: React.FC = () => {
           },
           onerror: (e: any) => {
             console.error("Session Error:", e);
-            setStatus(prev => ({ ...prev, error: "Connection error. Please restart Guard.", isConnecting: false }));
+            setStatus(prev => ({ ...prev, error: "Connection interrupted. Please verify your internet and restart Viva Guard.", isConnecting: false }));
             stopSession();
           },
           onclose: () => stopSession()
@@ -234,18 +244,18 @@ const App: React.FC = () => {
           systemInstruction: `You are the Viva Intelligence Guard. 
             
             PARTIES IN STREAM:
-            - PROFESSOR (System Audio): Asking questions.
-            - STUDENT (Microphone): Answering questions.
-            - YOU: Silent visual assistant.
+            - PROFESSOR (Priority, System Audio): Asking questions or explaining.
+            - STUDENT (User, Microphone): Responding to the professor.
+            - YOU: Silent visual assistant providing instant help.
             
             TASKS:
-            1. Transcribe the Professor's questions and IMMEDIATELY provide the best possible technical answer visually.
-            2. Monitor the Student's verbal response. If they stutter, fail to explain a concept, or give a wrong answer, provide a "Corrective Hint" or "Key Fact" box immediately.
-            3. Use formatted text: **Bold**, bullet points, or short numbered lists for high readability.
-            4. STAY SILENT. Do not use your voice. 
-            5. IMPORTANT: Ignore your own previous outputs in the audio stream to avoid feedback loops.
+            1. Listen to the Professor. If they ask a question like "What is 1+1?", show the answer and explanation IMMEDIATELY in the transcription area.
+            2. Listen to the Student. If they answer "1+1 is 2", confirm visually. If they struggle or get it wrong, provide a "Corrective Hint" or "Key Concept" box immediately.
+            3. Use highly readable formatting: **Bold**, bullet points, and short sentences.
+            4. STAY SILENT. Do not speak. Your help is 100% visual.
+            5. IGNORE FEEDBACK: Do not process your own previous transcription results as new input.
             
-            CONTEXT: ${knowledgeBase || 'Professional viva/interview session.'}`,
+            KNOWLEDGE CONTEXT: ${knowledgeBase || 'Professional viva/academic interview.'}`,
         }
       });
 
@@ -264,7 +274,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
           <div className="group relative">
             <div className="absolute -inset-1 bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000"></div>
-            <div className="relative w-11 h-11 rounded-xl bg-slate-900 flex items-center justify-center border border-white/10">
+            <div className="relative w-11 h-11 rounded-xl bg-slate-900 flex items-center justify-center border border-white/10 shadow-inner">
               <svg className="w-6 h-6 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
@@ -272,7 +282,7 @@ const App: React.FC = () => {
           </div>
           <div>
             <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">Viva Guard</h1>
-            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Silent Companion v2.1</p>
+            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.2em]">Full Audio Companion v2.2</p>
           </div>
         </div>
 
@@ -284,7 +294,7 @@ const App: React.FC = () => {
               disabled={status.isConnecting}
               className="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-sm font-bold transition-all flex items-center gap-2 shadow-xl shadow-indigo-600/20 active:scale-95"
             >
-              {status.isConnecting ? "Initializing..." : "Enable Viva Guard"}
+              {status.isConnecting ? "Configuring..." : "Enable Viva Guard"}
             </button>
           ) : (
             <button
@@ -301,37 +311,42 @@ const App: React.FC = () => {
       <main className="flex-1 flex overflow-hidden p-6 gap-6 relative">
         {!status.isActive && (
           <div className="w-96 flex flex-col gap-5 bg-white/[0.03] backdrop-blur-sm rounded-3xl p-6 border border-white/5 shadow-inner">
-            <div className="flex items-center gap-2">
-              <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
-              <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Setup Guide</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
+                <h2 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Setup Instructions</h2>
+              </div>
             </div>
+            
             <div className="flex-1 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
               <textarea
                 value={knowledgeBase}
                 onChange={(e) => setKnowledgeBase(e.target.value)}
-                placeholder="Paste Job Description or Study Notes for better AI accuracy..."
+                placeholder="Paste the Subject Topics, Job Description, or your Resume here..."
                 className="h-32 bg-black/40 border border-white/5 rounded-2xl p-4 text-sm focus:border-indigo-500/50 focus:ring-4 focus:ring-indigo-500/10 outline-none resize-none transition-all placeholder:text-slate-600"
               />
               
               <div className="p-5 rounded-2xl bg-indigo-500/5 border border-indigo-500/20 space-y-4">
-                <div className="flex items-start gap-3">
-                  <div className="mt-1 w-5 h-5 rounded-full bg-indigo-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold">1</div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    Click <b>'Enable Viva Guard'</b>. You will see a browser sharing popup.
-                  </p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="mt-1 w-5 h-5 rounded-full bg-indigo-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold">2</div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    Select the <b>'Chrome Tab'</b> (or Tab) containing your Viva/WhatsApp call. 
-                    <span className="block mt-1 text-indigo-400 font-bold">Tab sharing is the most reliable for audio.</span>
-                  </p>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="mt-1 w-5 h-5 rounded-full bg-amber-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-black">!</div>
-                  <p className="text-[11px] text-amber-200 leading-relaxed font-bold">
-                    CRITICAL: Look for the 'Share tab audio' (or 'Share audio') checkbox at the bottom left of the popup and CHECK IT.
-                  </p>
+                <h3 className="text-[11px] font-black text-indigo-400 uppercase tracking-wider">How to start properly:</h3>
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-indigo-400">1</div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Click the <b>Enable</b> button above. A browser dialog will appear.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 w-5 h-5 rounded-full bg-indigo-500/20 border border-indigo-500/40 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-indigo-400">2</div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Go to the <b>'Chrome Tab'</b> (or Tab) section. Select your WhatsApp Call or Meeting tab.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-3 bg-amber-500/10 p-2 rounded-lg border border-amber-500/20">
+                    <div className="mt-0.5 w-5 h-5 rounded-full bg-amber-500 flex-shrink-0 flex items-center justify-center text-[10px] font-bold text-black">!</div>
+                    <p className="text-[11px] text-amber-200 leading-relaxed font-bold">
+                      CRITICAL: Check the 'Share tab audio' checkbox at the bottom-left of the browser popup.
+                    </p>
+                  </div>
                 </div>
               </div>
               
@@ -346,9 +361,9 @@ const App: React.FC = () => {
                   <p className="text-[10px] text-rose-300 leading-relaxed">{status.error}</p>
                   <button 
                     onClick={startSession}
-                    className="mt-3 text-[10px] font-black uppercase text-indigo-400 hover:text-indigo-300 underline"
+                    className="mt-3 w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-[10px] font-black uppercase text-white transition-all"
                   >
-                    Click here to retry capture
+                    Retry Capture
                   </button>
                 </div>
               )}

@@ -1,0 +1,7 @@
+{
+  "name": "Viva Intelligence Assistant",
+  "description": "A real-time AI-powered interview and viva helper that listens to conversations and provides instant suggestions, answers, and talking points visually.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
